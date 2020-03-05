@@ -2,8 +2,13 @@
 //
 
 #include <iostream>
+#include <vector>
 
 #define M_PI		3.14159265358979323846	/* pi */
+
+
+using namespace::std;
+
 
 
 bool	MatInverse3by3(float pfDst[][3], float pfSrc[][3]);
@@ -13,7 +18,8 @@ bool	FitPlaneEquation(float* a, float* b, float* c, float* x, float* y, float* z
 float	CalcAVG(float* pData, int nNum);
 
 float	NormalizedCrossCorrelation(float* pSrcBuff, float* pCmpBuff, int nLength);
-int		EstimatePeriod(float* pData, int nNum);
+bool	EstimatePeriod(float* pData, int nNum, int nWindowSize, int nMaxPadding, int nMargin, int* nPeriod);
+//int		EstimatePeriod(float* pData, int nNum);
 
 
 
@@ -26,74 +32,79 @@ int		EstimatePeriod(float* pData, int nNum);
 int main()
 {
 
-	int nPeriod		= 100;
-	int nAmplitude	= 300;
-	float fPhase	= 0;
-	float fSinData	= 0;
-	int numOfData	= 1000;
+	int nPeriod = 100;
+	int nAmplitude = 300;
+	float fPhase = 0;
+	float fSinData = 0;
+	int numOfData = 1000;
 
 	float* datax = new float[numOfData];
 	float* datay = new float[numOfData];
 	float* dataz = new float[numOfData];
 
-	FILE* fp;
-
-	fopen_s(&fp, "test.txt", "wt");
-
 	for (int i = 0; i < numOfData; i++)
 	{
-		fPhase = (float)(2 * M_PI * i) / (float)nPeriod;
-		fSinData = nAmplitude * sin(fPhase);// +rand() % 50;
+		
+		fPhase = (float)(2 * M_PI * i) / (float)nPeriod+M_PI/2.0;
+		fSinData = nAmplitude * sin(fPhase) +rand() % 50;
+		
+		//fSinData = rand()%50;
 
 		dataz[i] = fSinData;
 
 		printf("%lf \n", fSinData);
-		fprintf(fp, "%lf \n", fSinData);
 	}
-
-	fclose(fp);
-
 
 
 	//for estimation
-	float mag	= 0;
-	float a		= 0;
-	float b		= 0;
-	float c		= 0;
+	float mag = 0;
+	float phase = 0;
+	float bias = 0;
+	float a = 0;
+	float b = 0;
+	float c = 0;
+
+	int nWindowSize = 500;
+	int nMaxPadding = 400;
+	int nMargin = 10;	//margin for period gap
+
+	int nEstimatedPeriod = 0;
 
 
-	//float fAvg = CalcAVG(dataz, numOfData);
-
-	//int nEstimatedPeriod = 300;
-	int nEstimatedPeriod = EstimatePeriod(dataz, numOfData);
-
+	EstimatePeriod(dataz, numOfData, nWindowSize, nMaxPadding, nMargin, &nEstimatedPeriod);
 
 	for (int i = 0; i < numOfData; i++)
 	{
 		if (nEstimatedPeriod == 0)
 		{
-//			datax[i] = 1;
-//			datay[i] = 0;
+			datax[i] = cos(0);
+			datay[i] = sin(0);
 		}
 		else
-		{ 
+		{
 			datax[i] = cos((2 * M_PI) * float(i % nEstimatedPeriod) / float(nEstimatedPeriod));
 			datay[i] = sin((2 * M_PI) * float(i % nEstimatedPeriod) / float(nEstimatedPeriod));
 		}
 	}
 
 
-
 	FitPlaneEquation(&a, &b, &c, datax, datay, dataz, numOfData);
-
+	
 	mag = sqrt(a * a + b * b);
+	bias = CalcAVG(dataz, numOfData);
+	phase = atan2(a, b);
+	
 
-	printf("magnititude = %lf \n", mag); 
-
+	printf("period = %d \n", nEstimatedPeriod);
+	printf("Magnititude = %lf \n", mag); 
+	printf("Bias = %lf \n", bias);
+	printf("Phase = %lf \n", phase);
 
 	//for testing...
-	EstimatePeriod(dataz, numOfData);
+//	EstimatePeriod(dataz, numOfData);
 //	CalcAutoCorrelation(dataz, numOfData);
+
+	//Calc RMS Error
 
 
 
@@ -148,14 +159,26 @@ bool FitPlaneEquation(float* a, float* b, float* c, float* x, float* y, float* z
 	}
 
 
-	MatInverse3by3(InvA, A);			//A.inv
-	MatMul3by3(TempMat1, InvA, A);		//TempMat1 = A.inv * A 
-	MatInverse3by3(InvMat, TempMat1);	//IvtMat = (A.inv * A).inv
-	MatMul3by3(TempMat2, InvMat, InvA);	//TempMat2 = (A.inv*A).inv * A.inv
+	if (!MatInverse3by3(InvA, A))
+	{
+		*a = 0;
+		*b = 0;
+		*c = 0;
 
-	*a = TempMat2[0][0] * B[0][0] + TempMat2[0][1] * B[1][0] + TempMat2[0][2] * B[2][0];
-	*b = TempMat2[1][0] * B[0][0] + TempMat2[1][1] * B[1][0] + TempMat2[1][2] * B[2][0];
-	*c = TempMat2[2][0] * B[0][0] + TempMat2[2][1] * B[1][0] + TempMat2[2][2] * B[2][0];
+		return false;
+	}
+
+//	MatMul3by3(TempMat1, InvA, A);		//TempMat1 = A.inv * A 
+//	MatInverse3by3(InvMat, TempMat1);	//IvtMat = (A.inv * A).inv
+//	MatMul3by3(TempMat2, InvMat, InvA);	//TempMat2 = (A.inv*A).inv * A.inv
+
+//	*a = TempMat2[0][0] * B[0][0] + TempMat2[0][1] * B[1][0] + TempMat2[0][2] * B[2][0];
+//	*b = TempMat2[1][0] * B[0][0] + TempMat2[1][1] * B[1][0] + TempMat2[1][2] * B[2][0];
+//	*c = TempMat2[2][0] * B[0][0] + TempMat2[2][1] * B[1][0] + TempMat2[2][2] * B[2][0];
+
+	*a = InvA[0][0] * B[0][0] + InvA[0][1] * B[1][0] + InvA[0][2] * B[2][0];
+	*b = InvA[1][0] * B[0][0] + InvA[1][1] * B[1][0] + InvA[1][2] * B[2][0];
+	*c = InvA[2][0] * B[0][0] + InvA[2][1] * B[1][0] + InvA[2][2] * B[2][0];
 
 	return true;
 
@@ -233,16 +256,19 @@ float CalcAVG(float* pData, int nNum)
 
 float NormalizedCrossCorrelation(float* pSrcBuff, float* pCmpBuff, int nLength)
 {
-	float fAVGA = 0;
-	float fAVGB = 0;
-	float fSigmaA = 0;
-	float fSigmaB = 0;
-	float fSigmaAB = 0;
-	float fValueA = 0;
-	float fValueB = 0;
-	float fNCC = 0;
-	int nIdx = 0;
-	int i = 0;
+	float fAVGA		= 0;
+	float fAVGB		= 0;
+	float fSigmaA	= 0;
+	float fSigmaB	= 0;
+	float fSigmaAB	= 0;
+	float fValueA	= 0;
+	float fValueB	= 0;
+	float fNCC		= 0;
+	int nIdx		= 0;
+	int i			= 0;
+
+	if (nLength < 1)
+		return 0;
 
 	for (i = 0; i < nLength; i++)
 	{
@@ -263,6 +289,9 @@ float NormalizedCrossCorrelation(float* pSrcBuff, float* pCmpBuff, int nLength)
 	fSigmaB = sqrt(fSigmaB / nLength - fAVGB * fAVGB);
 	fSigmaAB = fSigmaA * fSigmaB;
 
+	if (fSigmaAB == 0)
+		return 0;
+
 	for (i = 0; i < nLength; i++)
 	{
 		fValueA = (float)pSrcBuff[i];
@@ -278,25 +307,47 @@ float NormalizedCrossCorrelation(float* pSrcBuff, float* pCmpBuff, int nLength)
 
 
 
-int EstimatePeriod(float* pData, int nNum)
+//return value : *nPeriod
+bool EstimatePeriod(float* pData, int nNum, int nWindowSize, int nMaxPadding, int nMargin, int* nPeriod)
 {
-	int nWindowSize		= 500;
-	int nMaxPadding		= 400;
+
+//	int nWindowSize		= 500;
+//	int nMaxPadding		= 400;
+//  int nMargin			= 10;
+
+	//0. Exception Check
+	*nPeriod = 0;
+
+	if (nNum < 1)	
+		return false;
+	if (nWindowSize < 1)
+		return false;
+	if (nMaxPadding < 1)
+		return false;
+	if (nNum < nWindowSize + nMaxPadding)
+		return false;
+	
+
+	bool  bRetVal		= 0;
 	float fCorrelateSum = 0;
-	int j				= 1;
+	int i				= 0;
+	int j				= 0;
 	int nPadIdx			= 0;
 	float* pSrc			= new float[nWindowSize];
 	float* pCmp			= new float[nWindowSize];
+	float* pArrCorrel	= new float[nMaxPadding];
+	int nCorrelPos		= 0;
 
 
-	//float* pArrCorrel = new float[nNum];
-	float pArrCorrel[1000];
+	vector<int> vecCrossPos;
+	int nCrossPosCnt	= 0;
+	
+	float fHalfPeriodSum= 0;
+	float fHalfPeriodCnt= 0;
 
-	int nCorrelPos = 0;
-
-	for (int j = 0; j < nMaxPadding; j++)
+	for (j = 0; j < nMaxPadding; j++)
 	{
-		for (int i = 0; i < nWindowSize; i++)
+		for (i = 0; i < nWindowSize; i++)
 		{
 			pSrc[i] = pData[i];
 			pCmp[i] = pData[i + j];
@@ -306,20 +357,51 @@ int EstimatePeriod(float* pData, int nNum)
 	}
 
 
-	for (int i = 0; i < nWindowSize - 1; i++)
+	vecCrossPos.clear();
+
+	for (i = 0; i < nMaxPadding-1; i++)
 	{
 		if (pArrCorrel[i] * pArrCorrel[i + 1] <= 0)
 		{
-			printf("cross pos %d \n", i);
+			#ifdef _DEBUG
+				printf("cross pos %d \n", i);
+			#endif
+
+
+			vecCrossPos.push_back(i);
+			nCrossPosCnt++;
 		}
 	}
 
+	for (i = 0; i < nCrossPosCnt-1; i++)
+	{
+		if (vecCrossPos[i + 1] - vecCrossPos[i] > nMargin)
+		{
+			fHalfPeriodSum = fHalfPeriodSum + vecCrossPos[i + 1] - vecCrossPos[i];
+			fHalfPeriodCnt = fHalfPeriodCnt+1;
+		}
+	}
+
+	if (fHalfPeriodCnt > 0)
+	{
+		*nPeriod = 2*(fHalfPeriodSum / fHalfPeriodCnt);
+
+		bRetVal = true;
+	}
+	else
+	{
+		*nPeriod = 0;
+		bRetVal = false;
+	}
 
 
 	//Search Zero Cross 
 	//Search Max Pos
 
-	//	delete[] pArrCorrel;
 
-	return 0;
+	delete[] pArrCorrel;
+	delete[] pSrc;
+	delete[] pCmp;
+
+	return bRetVal;
 }//end of function 
